@@ -1,94 +1,180 @@
-#include <opencv2/opencv.hpp>
+﻿#include <opencv2/opencv.hpp>
 #include <iostream>
+#include <fstream>
 #include <vector>
-#include <chrono>
-#include <thread>
+#include <string>
 
-constexpr int GRID_ROWS = 7;
-constexpr int GRID_COLS = 7;   // includes "Level" column
+constexpr int GRID_ROWS = 7;   // data rows only
+constexpr int GRID_COLS = 7;   // data cols only
+constexpr int PLAYBACK_DELAY_MS = 600;
 
-static const char* EMOTIONS[GRID_COLS] = {
-    "Level",
-    "Anger",
-    "Sadness",
-    "Happiness",
-    "Fatigue",
-    "Surprise",
-    "Judgment",
+struct ExpressionLabels {
+    std::vector<std::vector<std::string>> table; // includes headers
 };
 
-static const char* INTENSITY[GRID_ROWS] = {
-    "Neutral",
-    "Mild",
-    "Clear",
-    "Strong",
-    "Strong+",
-    "Intense",
-    "Intense+"
-};
+// ------------------------------------------------------------
+// Load TAB-separated CSV (with row + column headers)
+// ------------------------------------------------------------
+static bool loadExpressionCSV(
+    const std::string& path,
+    ExpressionLabels& out)
+{
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        std::cerr << "Failed to open CSV: " << path << "\n";
+        return false;
+    }
+
+    out.table.clear();
+    std::string line;
+
+    while (std::getline(file, line)) {
+        std::vector<std::string> row;
+        std::string cell;
+
+        for (char c : line) {
+            if (c == ',') {
+                row.push_back(cell);
+                cell.clear();
+            }
+            else {
+                cell += c;
+            }
+        }
+        row.push_back(cell);
+        out.table.push_back(row);
+    }
+
+    return true;
+}
 
 int main()
 {
-    const std::string imagePath = "../RoboEyes/assets/Eye_Expressions_HD.png";
+    const std::string imagePath = "assets/Eye_Expressions_HD.png";
+    const std::string csvPath = "assets/Expressions_Label.csv";
 
+    // ------------------------------------------------------------
+    // Load image atlas
+    // ------------------------------------------------------------
     cv::Mat atlas = cv::imread(imagePath, cv::IMREAD_GRAYSCALE);
     if (atlas.empty()) {
-        std::cerr << "Failed to load: " << imagePath << std::endl;
+        std::cerr << "Failed to load atlas image\n";
         return -1;
     }
 
-    const int tileWidth = atlas.cols / GRID_COLS;
-    const int tileHeight = atlas.rows / GRID_ROWS;
+    // ------------------------------------------------------------
+    // Load CSV
+    // ------------------------------------------------------------
+    ExpressionLabels labels;
+    if (!loadExpressionCSV(csvPath, labels)) {
+        std::cerr << "Failed to load CSV\n";
+        return -1;
+    }
 
-    cv::Mat display;
-    cv::namedWindow("Eye Expression Viewer", cv::WINDOW_AUTOSIZE);
+    // Expect 8x8 CSV (1 header row + 7 data rows)
+    if (labels.table.size() != GRID_ROWS + 1 ||
+        labels.table[0].size() != GRID_COLS + 1) {
+        std::cerr << "CSV must be 8x8 (with headers)\n";
+    }
 
-    constexpr int DISPLAY_DELAY_MS = 600; // per expression
+    // ------------------------------------------------------------
+    // Tile geometry
+    // ------------------------------------------------------------
+    const int tileW = atlas.cols / GRID_COLS;
+    const int tileH = atlas.rows / GRID_ROWS;
 
+    int row = 0;   // [0..6] data row
+    int col = 0;   // [0..6] data column
+    bool autoplay = true;
+
+    cv::namedWindow("RoboEyes", cv::WINDOW_AUTOSIZE);
+
+    // ------------------------------------------------------------
+    // Main loop
+    // ------------------------------------------------------------
     while (true)
     {
-        for (int col = 0; col < GRID_COLS; ++col)        
+        cv::Rect roi(
+            col * tileW,
+            row * tileH,
+            tileW,
+            tileH
+        );
+
+        cv::Mat tile;
+        atlas(roi).copyTo(tile);
+        cv::cvtColor(tile, tile, cv::COLOR_GRAY2BGR);
+
+        // --------------------------------------------------------
+        // Correct CSV access (skip headers)
+        // --------------------------------------------------------
+        const std::string& intensity =
+            labels.table[row + 1][0];          // row header
+
+        const std::string& emotion =
+            labels.table[0][col + 1];          // column header
+
+        const std::string& state =
+            labels.table[row + 1][col + 1];    // data cell
+
+        std::string text = state;
+
+        cv::putText(
+            tile,
+            text,
+            cv::Point(10, tileH - 10),
+            cv::FONT_HERSHEY_SIMPLEX,
+            0.45,
+            cv::Scalar(0, 255, 0),
+            1,
+            cv::LINE_AA
+        );
+
+        cv::imshow("RoboEyes", tile);
+
+        int key = cv::waitKey(autoplay ? PLAYBACK_DELAY_MS : 0);
+        bool manualInput = false;
+
+        switch (key)
         {
-            for (int row = 0; row < GRID_ROWS; ++row)
-            {
-                cv::Rect roi(
-                    col * tileWidth,
-                    row * tileHeight,
-                    tileWidth,
-                    tileHeight
-                );
+        case 27: // ESC
+            return 0;
 
-                display = atlas(roi).clone(); // isolated tile
+        case ' ':
+            autoplay = !autoplay;
+            break;
 
-                // Convert to BGR for text overlay
-                cv::cvtColor(display, display, cv::COLOR_GRAY2BGR);
+        case 81: case 'a': // LEFT
+            col = (col > 0) ? col - 1 : GRID_COLS - 1;
+            manualInput = true;
+            break;
 
-                // Text overlay
-                std::string label =
-                    std::string(INTENSITY[row]) + " / " + EMOTIONS[col];
+        case 83: case 'd': // RIGHT
+            col = (col + 1) % GRID_COLS;
+            manualInput = true;
+            break;
 
-                cv::putText(
-                    display,
-                    label,
-                    cv::Point(10, tileHeight - 10),
-                    cv::FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    cv::Scalar(0, 255, 0),
-                    1,
-                    cv::LINE_AA
-                );
+        case 82: case 'w': // UP
+            row = (row > 0) ? row - 1 : GRID_ROWS - 1;
+            manualInput = true;
+            break;
 
-                cv::namedWindow("Eye Expression Viewer", cv::WINDOW_NORMAL);
+        case 84: case 's': // DOWN
+            row = (row + 1) % GRID_ROWS;
+            manualInput = true;
+            break;
 
-                cv::imshow("Eye Expression Viewer", display);
+        default:
+            break;
+        }
 
-                int key = cv::waitKey(DISPLAY_DELAY_MS);
-                if (key == 27) { // ESC
-                    return 0;
-                }
+        // Auto-play advance
+        if (autoplay && !manualInput) {
+            col++;
+            if (col >= GRID_COLS) {
+                col = 0;
+                row = (row + 1) % GRID_ROWS;
             }
         }
     }
-
-    return 0;
 }
