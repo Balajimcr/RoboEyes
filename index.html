@@ -3,53 +3,38 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>RoboEyes Web Debug</title>
+    <title>RoboEyes Auto</title>
     <style>
         body, html {
             margin: 0; padding: 0; width: 100%; height: 100%;
             background: black; overflow: hidden;
             display: flex; justify-content: center; align-items: center;
-            font-family: monospace;
+            touch-action: none; 
         }
         canvas {
             max-width: 100%; max-height: 100%;
             object-fit: contain;
-            image-rendering: pixelated; /* Keeps eyes sharp */
+            image-rendering: pixelated; 
         }
         #ui-layer {
-            position: absolute; bottom: 20px; left: 0; width: 100%;
+            position: absolute; bottom: 30px; left: 0; width: 100%;
             text-align: center; pointer-events: none;
             z-index: 10;
         }
         .status-text {
-            color: #0f0; font-size: 18px;
-            background: rgba(0,0,0,0.7); padding: 5px 15px;
-            border-radius: 5px;
+            color: #0f0; font-family: monospace; font-size: 18px;
+            background: rgba(0,0,0,0.6); padding: 8px 20px;
+            border-radius: 8px; border: 1px solid #0f0;
+            letter-spacing: 1px;
         }
-        #debug-console {
-            position: absolute; top: 10px; left: 10px;
-            color: #0f0; font-size: 12px; text-align: left;
-            background: rgba(0,0,0,0.8); padding: 10px;
-            border: 1px solid #333; pointer-events: none;
-            max-width: 90%;
-        }
-        .error { color: #ff4444; }
-        .success { color: #44ff44; }
     </style>
 </head>
-<body onclick="toggleFullscreen()">
-
-    <div id="debug-console">
-        <b>Debug Log:</b><br>
-        <span id="log-csv">CSV: Waiting...</span><br>
-        <span id="log-img">IMG: Waiting...</span><br>
-        <span id="log-protocol">Mode: Checking...</span>
-    </div>
+<body>
 
     <canvas id="eyeCanvas"></canvas>
     
     <div id="ui-layer">
-        <span class="status-text" id="label">Initializing...</span>
+        <span class="status-text" id="label">LOADING...</span>
     </div>
 
     <script>
@@ -57,94 +42,57 @@
         const GRID_ROWS = 7;
         const GRID_COLS = 7;
         const DELAY = 600;
-        const atlasPath = 'assets/Eye_Expressions_HD.png';
-        const csvPath = 'assets/Expressions_Label.csv';
+        const ATLAS_PATH = 'assets/Eye_Expressions_HD.png';
+        const CSV_PATH = 'assets/Expressions_Label.csv';
 
         // --- STATE ---
         const canvas = document.getElementById('eyeCanvas');
         const ctx = canvas.getContext('2d');
         const labelText = document.getElementById('label');
-        const logCsv = document.getElementById('log-csv');
-        const logImg = document.getElementById('log-img');
-        const logProc = document.getElementById('log-protocol');
 
         let atlas = new Image();
         let csvData = [];
         let currentRow = 0;
         let currentCol = 0;
-        let autoplay = true;
+        let autoplay = true; // Enabled by default
         let timer = null;
+        let isFirstTouch = true;
 
-        // Check protocol (CORS check)
-        if (window.location.protocol === 'file:') {
-            logProc.innerHTML = "Mode: <span class='error'>Local File (CORS will likely fail)</span>";
-            logProc.innerHTML += "<br>Use Live Server or upload to GitHub.";
-        } else {
-            logProc.innerHTML = "Mode: <span class='success'>Server/GitHub detected</span>";
+        let touchStartX = 0;
+        const swipeThreshold = 50;
+
+        // --- CORE LOGIC ---
+        async function init() {
+            try {
+                const response = await fetch(CSV_PATH);
+                if (!response.ok) throw new Error("CSV missing");
+                const text = await response.text();
+                csvData = text.split('\n').map(row => row.replace('\r', '').split(','));
+
+                atlas.src = ATLAS_PATH;
+                atlas.onload = () => {
+                    drawFrame();
+                    startLoop(); // Start animating immediately
+                };
+            } catch (err) {
+                labelText.innerText = "Error Loading Assets";
+            }
         }
 
-        // --- LOADING LOGIC ---
-        function init() {
-            logCsv.innerText = `CSV: Attempting to fetch ${csvPath}...`;
-            
-            fetch(csvPath)
-                .then(response => {
-                    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-                    return response.text();
-                })
-                .then(text => {
-                    logCsv.innerHTML = `CSV: <span class='success'>Loaded Successfully</span>`;
-                    csvData = text.split('\n').map(row => row.replace('\r', '').split(','));
-                    loadAtlas();
-                })
-                .catch(err => {
-                    logCsv.innerHTML = `CSV: <span class='error'>Failed (${err.message})</span>`;
-                    labelText.innerText = "Check Browser Console (F12)";
-                    console.error("CSV Error:", err);
-                });
-        }
-
-        function loadAtlas() {
-            logImg.innerText = `IMG: Loading ${atlasPath}...`;
-            atlas.src = atlasPath;
-            
-            atlas.onload = () => {
-                logImg.innerHTML = `IMG: <span class='success'>Loaded (${atlas.width}x${atlas.height})</span>`;
-                startLoop();
-                drawFrame();
-            };
-
-            atlas.onerror = () => {
-                logImg.innerHTML = `IMG: <span class='error'>Failed to load image</span>`;
-            };
-        }
-
-        // --- ANIMATION LOGIC ---
         function drawFrame() {
             if (!atlas.complete || csvData.length === 0) return;
-
             const tileW = atlas.width / GRID_COLS;
             const tileH = atlas.height / GRID_ROWS;
-
             if (canvas.width !== tileW) {
                 canvas.width = tileW;
                 canvas.height = tileH;
             }
-
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.drawImage(
-                atlas,
-                currentCol * tileW, currentRow * tileH, tileW, tileH,
-                0, 0, tileW, tileH
-            );
-
+            ctx.drawImage(atlas, currentCol * tileW, currentRow * tileH, tileW, tileH, 0, 0, tileW, tileH);
             try {
-                // Skip headers (row+1, col+1)
                 const state = csvData[currentRow + 1][currentCol + 1];
-                labelText.innerText = state || "No Label";
-            } catch (e) {
-                labelText.innerText = "Label Error";
-            }
+                labelText.innerText = state || "ROBO-EYES";
+            } catch (e) { labelText.innerText = "ROBO-EYES"; }
         }
 
         function nextFrame() {
@@ -156,32 +104,60 @@
             drawFrame();
         }
 
+        function prevFrame() {
+            currentCol--;
+            if (currentCol < 0) {
+                currentCol = GRID_COLS - 1;
+                currentRow = (currentRow > 0) ? currentRow - 1 : GRID_ROWS - 1;
+            }
+            drawFrame();
+        }
+
         function startLoop() {
             if (timer) clearInterval(timer);
-            timer = setInterval(() => {
-                if (autoplay) nextFrame();
-            }, DELAY);
+            timer = setInterval(() => { if (autoplay) nextFrame(); }, DELAY);
         }
 
         // --- INTERACTION ---
-        function toggleFullscreen() {
-            // Android Chrome requirement: must trigger from user click
-            if (!document.fullscreenElement) {
-                document.documentElement.requestFullscreen().catch(() => {});
+        window.addEventListener('touchstart', (e) => {
+            touchStartX = e.changedTouches[0].screenX;
+            
+            // First tap enables Fullscreen (required by browsers)
+            if (isFirstTouch) {
+                enterFullscreen();
+                isFirstTouch = false;
             }
-            autoplay = !autoplay;
-            if (!autoplay) labelText.innerText = "Paused";
+        }, false);
+
+        window.addEventListener('touchend', (e) => {
+            const touchEndX = e.changedTouches[0].screenX;
+            const diff = touchStartX - touchEndX;
+
+            if (Math.abs(diff) > swipeThreshold) {
+                // Swipe detected: Move and stay paused for manual control
+                autoplay = false; 
+                if (diff > 0) nextFrame(); 
+                else prevFrame();
+            } else {
+                // Tap detected: Manually cycle to next frame and pause auto
+                autoplay = false;
+                nextFrame();
+            }
+        }, false);
+
+        function enterFullscreen() {
+            const doc = document.documentElement;
+            if (doc.requestFullscreen) doc.requestFullscreen();
+            else if (doc.webkitRequestFullscreen) doc.webkitRequestFullscreen();
         }
 
-        // Keyboard support for testing on PC
+        // Keyboard Support
         window.addEventListener('keydown', (e) => {
-            if (e.key === ' ') { autoplay = !autoplay; }
-            if (e.key === 'ArrowRight') { currentCol = (currentCol + 1) % GRID_COLS; autoplay = false; }
-            if (e.key === 'ArrowLeft') { currentCol = (currentCol > 0) ? currentCol - 1 : GRID_COLS - 1; autoplay = false; }
-            drawFrame();
+            autoplay = false;
+            if (e.key === 'ArrowRight' || e.key === ' ') nextFrame();
+            if (e.key === 'ArrowLeft') prevFrame();
         });
 
-        // Initialize
         init();
     </script>
 </body>
