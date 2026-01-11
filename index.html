@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>RoboEyes Web</title>
+    <style>
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            background: black; overflow: hidden;
+            display: flex; justify-content: center; align-items: center;
+        }
+        canvas {
+            max-width: 100%; max-height: 100%;
+            object-fit: contain;
+        }
+        #ui-layer {
+            position: absolute; bottom: 20px; left: 0; width: 100%;
+            text-align: center; pointer-events: none;
+        }
+        .status-text {
+            color: #0f0; font-family: monospace; font-size: 18px;
+            background: rgba(0,0,0,0.5); padding: 5px 10px;
+        }
+    </style>
+</head>
+<body onclick="toggleFullscreen()">
+
+    <canvas id="eyeCanvas"></canvas>
+    
+    <div id="ui-layer">
+        <span class="status-text" id="label">Loading Assets...</span>
+    </div>
+
+    <script>
+        const GRID_ROWS = 7;
+        const GRID_COLS = 7;
+        const DELAY = 600;
+
+        const canvas = document.getElementById('eyeCanvas');
+        const ctx = canvas.getContext('2d');
+        const labelText = document.getElementById('label');
+
+        let atlas = new Image();
+        let csvData = [];
+        let currentRow = 0;
+        let currentCol = 0;
+        let autoplay = true;
+        let timer = null;
+
+        // Paths must match your folder structure exactly (Case-Sensitive!)
+		const atlasPath = 'assets/Eye_Expressions_HD.png';
+		const csvPath = 'assets/Expressions_Label.csv';
+
+		let atlas = new Image();
+		let csvData = [];
+		let currentRow = 0;
+		let currentCol = 0;
+		let autoplay = true;
+		let timer = null;
+
+		// Start loading the image
+		atlas.src = atlasPath;
+
+		// Load CSV Data
+		fetch(csvPath)
+			.then(response => {
+				if (!response.ok) throw new Error("Check if Expressions_Label.csv exists in assets/");
+				return response.text();
+			})
+			.then(text => {
+				// Clean up any carriage returns (\r) from Windows-style CSVs
+				csvData = text.split('\n').map(row => row.replace('\r', '').split(','));
+				startLoop();
+			})
+			.catch(err => {
+				console.error("File Load error:", err);
+				labelText.innerText = "Error: " + err.message;
+			});
+
+        function drawFrame() {
+            if (!atlas.complete || csvData.length === 0) return;
+
+            const tileW = atlas.width / GRID_COLS;
+            const tileH = atlas.height / GRID_ROWS;
+
+            // Set canvas size to match tile aspect ratio on first run
+            if (canvas.width !== tileW) {
+                canvas.width = tileW;
+                canvas.height = tileH;
+            }
+
+            // Draw the specific tile from atlas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(
+                atlas,
+                currentCol * tileW, currentRow * tileH, tileW, tileH, // Source
+                0, 0, tileW, tileH // Destination
+            );
+
+            // Update Label (Row+1 and Col+1 to skip headers in CSV)
+            try {
+                const state = csvData[currentRow + 1][currentCol + 1];
+                labelText.innerText = state || "---";
+            } catch (e) {
+                labelText.innerText = "Error indexing CSV";
+            }
+        }
+
+        function nextFrame() {
+            currentCol++;
+            if (currentCol >= GRID_COLS) {
+                currentCol = 0;
+                currentRow = (currentRow + 1) % GRID_ROWS;
+            }
+            drawFrame();
+        }
+
+        function startLoop() {
+            if (timer) clearInterval(timer);
+            timer = setInterval(() => {
+                if (autoplay) nextFrame();
+            }, DELAY);
+        }
+
+        // Handle Touch/Click for interaction
+        window.addEventListener('keydown', (e) => {
+            if (e.key === ' ') autoplay = !autoplay;
+            if (e.key === 'ArrowRight') { currentCol = (currentCol + 1) % GRID_COLS; autoplay = false; }
+            if (e.key === 'ArrowLeft') { currentCol = (currentCol > 0) ? currentCol - 1 : GRID_COLS - 1; autoplay = false; }
+            drawFrame();
+        });
+
+        // Mobile Fullscreen Trigger
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(err => {
+                    console.log(`Error attempting to enable full-screen: ${err.message}`);
+                });
+            }
+            // Toggle play/pause on tap
+            autoplay = !autoplay;
+        }
+
+        atlas.onload = drawFrame;
+    </script>
+</body>
+</html>
