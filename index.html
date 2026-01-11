@@ -3,43 +3,70 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>RoboEyes Web</title>
+    <title>RoboEyes Web Debug</title>
     <style>
         body, html {
             margin: 0; padding: 0; width: 100%; height: 100%;
             background: black; overflow: hidden;
             display: flex; justify-content: center; align-items: center;
+            font-family: monospace;
         }
         canvas {
             max-width: 100%; max-height: 100%;
             object-fit: contain;
+            image-rendering: pixelated; /* Keeps eyes sharp */
         }
         #ui-layer {
             position: absolute; bottom: 20px; left: 0; width: 100%;
             text-align: center; pointer-events: none;
+            z-index: 10;
         }
         .status-text {
-            color: #0f0; font-family: monospace; font-size: 18px;
-            background: rgba(0,0,0,0.5); padding: 5px 10px;
+            color: #0f0; font-size: 18px;
+            background: rgba(0,0,0,0.7); padding: 5px 15px;
+            border-radius: 5px;
         }
+        #debug-console {
+            position: absolute; top: 10px; left: 10px;
+            color: #0f0; font-size: 12px; text-align: left;
+            background: rgba(0,0,0,0.8); padding: 10px;
+            border: 1px solid #333; pointer-events: none;
+            max-width: 90%;
+        }
+        .error { color: #ff4444; }
+        .success { color: #44ff44; }
     </style>
 </head>
 <body onclick="toggleFullscreen()">
 
+    <div id="debug-console">
+        <b>Debug Log:</b><br>
+        <span id="log-csv">CSV: Waiting...</span><br>
+        <span id="log-img">IMG: Waiting...</span><br>
+        <span id="log-protocol">Mode: Checking...</span>
+    </div>
+
     <canvas id="eyeCanvas"></canvas>
     
     <div id="ui-layer">
-        <span class="status-text" id="label">Loading Assets...</span>
+        <span class="status-text" id="label">Initializing...</span>
     </div>
 
     <script>
+        // --- CONFIGURATION ---
         const GRID_ROWS = 7;
         const GRID_COLS = 7;
         const DELAY = 600;
+        const atlasPath = 'assets/Eye_Expressions_HD.png';
+        const csvPath = 'assets/Expressions_Label.csv';
 
+        // --- STATE ---
         const canvas = document.getElementById('eyeCanvas');
         const ctx = canvas.getContext('2d');
         const labelText = document.getElementById('label');
+        const logCsv = document.getElementById('log-csv');
+        const logImg = document.getElementById('log-img');
+        const logProc = document.getElementById('log-protocol');
 
         let atlas = new Image();
         let csvData = [];
@@ -48,62 +75,75 @@
         let autoplay = true;
         let timer = null;
 
-        // Paths must match your folder structure exactly (Case-Sensitive!)
-		const atlasPath = 'assets/Eye_Expressions_HD.png';
-		const csvPath = 'assets/Expressions_Label.csv';
+        // Check protocol (CORS check)
+        if (window.location.protocol === 'file:') {
+            logProc.innerHTML = "Mode: <span class='error'>Local File (CORS will likely fail)</span>";
+            logProc.innerHTML += "<br>Use Live Server or upload to GitHub.";
+        } else {
+            logProc.innerHTML = "Mode: <span class='success'>Server/GitHub detected</span>";
+        }
 
-		let atlas = new Image();
-		let csvData = [];
-		let currentRow = 0;
-		let currentCol = 0;
-		let autoplay = true;
-		let timer = null;
+        // --- LOADING LOGIC ---
+        function init() {
+            logCsv.innerText = `CSV: Attempting to fetch ${csvPath}...`;
+            
+            fetch(csvPath)
+                .then(response => {
+                    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+                    return response.text();
+                })
+                .then(text => {
+                    logCsv.innerHTML = `CSV: <span class='success'>Loaded Successfully</span>`;
+                    csvData = text.split('\n').map(row => row.replace('\r', '').split(','));
+                    loadAtlas();
+                })
+                .catch(err => {
+                    logCsv.innerHTML = `CSV: <span class='error'>Failed (${err.message})</span>`;
+                    labelText.innerText = "Check Browser Console (F12)";
+                    console.error("CSV Error:", err);
+                });
+        }
 
-		// Start loading the image
-		atlas.src = atlasPath;
+        function loadAtlas() {
+            logImg.innerText = `IMG: Loading ${atlasPath}...`;
+            atlas.src = atlasPath;
+            
+            atlas.onload = () => {
+                logImg.innerHTML = `IMG: <span class='success'>Loaded (${atlas.width}x${atlas.height})</span>`;
+                startLoop();
+                drawFrame();
+            };
 
-		// Load CSV Data
-		fetch(csvPath)
-			.then(response => {
-				if (!response.ok) throw new Error("Check if Expressions_Label.csv exists in assets/");
-				return response.text();
-			})
-			.then(text => {
-				// Clean up any carriage returns (\r) from Windows-style CSVs
-				csvData = text.split('\n').map(row => row.replace('\r', '').split(','));
-				startLoop();
-			})
-			.catch(err => {
-				console.error("File Load error:", err);
-				labelText.innerText = "Error: " + err.message;
-			});
+            atlas.onerror = () => {
+                logImg.innerHTML = `IMG: <span class='error'>Failed to load image</span>`;
+            };
+        }
 
+        // --- ANIMATION LOGIC ---
         function drawFrame() {
             if (!atlas.complete || csvData.length === 0) return;
 
             const tileW = atlas.width / GRID_COLS;
             const tileH = atlas.height / GRID_ROWS;
 
-            // Set canvas size to match tile aspect ratio on first run
             if (canvas.width !== tileW) {
                 canvas.width = tileW;
                 canvas.height = tileH;
             }
 
-            // Draw the specific tile from atlas
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             ctx.drawImage(
                 atlas,
-                currentCol * tileW, currentRow * tileH, tileW, tileH, // Source
-                0, 0, tileW, tileH // Destination
+                currentCol * tileW, currentRow * tileH, tileW, tileH,
+                0, 0, tileW, tileH
             );
 
-            // Update Label (Row+1 and Col+1 to skip headers in CSV)
             try {
+                // Skip headers (row+1, col+1)
                 const state = csvData[currentRow + 1][currentCol + 1];
-                labelText.innerText = state || "---";
+                labelText.innerText = state || "No Label";
             } catch (e) {
-                labelText.innerText = "Error indexing CSV";
+                labelText.innerText = "Label Error";
             }
         }
 
@@ -123,26 +163,26 @@
             }, DELAY);
         }
 
-        // Handle Touch/Click for interaction
+        // --- INTERACTION ---
+        function toggleFullscreen() {
+            // Android Chrome requirement: must trigger from user click
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(() => {});
+            }
+            autoplay = !autoplay;
+            if (!autoplay) labelText.innerText = "Paused";
+        }
+
+        // Keyboard support for testing on PC
         window.addEventListener('keydown', (e) => {
-            if (e.key === ' ') autoplay = !autoplay;
+            if (e.key === ' ') { autoplay = !autoplay; }
             if (e.key === 'ArrowRight') { currentCol = (currentCol + 1) % GRID_COLS; autoplay = false; }
             if (e.key === 'ArrowLeft') { currentCol = (currentCol > 0) ? currentCol - 1 : GRID_COLS - 1; autoplay = false; }
             drawFrame();
         });
 
-        // Mobile Fullscreen Trigger
-        function toggleFullscreen() {
-            if (!document.fullscreenElement) {
-                document.documentElement.requestFullscreen().catch(err => {
-                    console.log(`Error attempting to enable full-screen: ${err.message}`);
-                });
-            }
-            // Toggle play/pause on tap
-            autoplay = !autoplay;
-        }
-
-        atlas.onload = drawFrame;
+        // Initialize
+        init();
     </script>
 </body>
 </html>
