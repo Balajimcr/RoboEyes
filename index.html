@@ -3,7 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>RoboEyes Auto</title>
+    <title>RoboEyes Pro</title>
+    
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#000000">
+
     <style>
         body, html {
             margin: 0; padding: 0; width: 100%; height: 100%;
@@ -26,6 +31,7 @@
             background: rgba(0,0,0,0.6); padding: 8px 20px;
             border-radius: 8px; border: 1px solid #0f0;
             letter-spacing: 1px;
+            text-transform: uppercase;
         }
     </style>
 </head>
@@ -34,7 +40,7 @@
     <canvas id="eyeCanvas"></canvas>
     
     <div id="ui-layer">
-        <span class="status-text" id="label">LOADING...</span>
+        <span class="status-text" id="label">TAP TO ENTER FULLSCREEN</span>
     </div>
 
     <script>
@@ -54,7 +60,7 @@
         let csvData = [];
         let currentRow = 0;
         let currentCol = 0;
-        let autoplay = true; // Enabled by default
+        let autoplay = true;
         let timer = null;
         let isFirstTouch = true;
 
@@ -72,7 +78,7 @@
                 atlas.src = ATLAS_PATH;
                 atlas.onload = () => {
                     drawFrame();
-                    startLoop(); // Start animating immediately
+                    startLoop();
                 };
             } catch (err) {
                 labelText.innerText = "Error Loading Assets";
@@ -121,8 +127,6 @@
         // --- INTERACTION ---
         window.addEventListener('touchstart', (e) => {
             touchStartX = e.changedTouches[0].screenX;
-            
-            // First tap enables Fullscreen (required by browsers)
             if (isFirstTouch) {
                 enterFullscreen();
                 isFirstTouch = false;
@@ -134,24 +138,30 @@
             const diff = touchStartX - touchEndX;
 
             if (Math.abs(diff) > swipeThreshold) {
-                // Swipe detected: Move and stay paused for manual control
                 autoplay = false; 
                 if (diff > 0) nextFrame(); 
                 else prevFrame();
             } else {
-                // Tap detected: Manually cycle to next frame and pause auto
                 autoplay = false;
                 nextFrame();
             }
         }, false);
 
         function enterFullscreen() {
-            const doc = document.documentElement;
-            if (doc.requestFullscreen) doc.requestFullscreen();
-            else if (doc.webkitRequestFullscreen) doc.webkitRequestFullscreen();
+            const docEl = document.documentElement;
+            const requestMethod = docEl.requestFullscreen || 
+                                  docEl.webkitRequestFullscreen || 
+                                  docEl.mozRequestFullScreen || 
+                                  docEl.msRequestFullscreen;
+
+            if (requestMethod) {
+                // navigationUI: "hide" specifically targets the address/nav bars
+                requestMethod.call(docEl, { navigationUI: "hide" }).catch(err => {
+                    console.log(`Fullscreen failed: ${err.message}`);
+                });
+            }
         }
 
-        // Keyboard Support
         window.addEventListener('keydown', (e) => {
             autoplay = false;
             if (e.key === 'ArrowRight' || e.key === ' ') nextFrame();
